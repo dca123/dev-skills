@@ -1,0 +1,7 @@
+{
+  "name": "dev-skills",
+  "private": true,
+  "description": "Portable engineering standards as agent skills: testing, comments, data shape. Works with pi and Claude Code.",
+  "keywords": ["pi-package"],
+  "pi": { "skills": ["./skills"] }
+}
