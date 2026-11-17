@@ -34,4 +34,4 @@ A legitimate state can still need a structural fix: concurrent saves are legitim
 
 When the structural fix is out of scope, ship the local fix and record a follow-up that names the class of bug. Never ship the guard instead.
 
-When a classifier model is available (Pi's `models.classify` with `typesafe/jev-latest`), it can label the fix kind for each finding, one call per finding, run in parallel. Use the label at confidence 0.6 or above; below that, decide with written reasoning.
+When a classifier model is available (Pi's `models.classify` with `typesafe/jev-latest`), it can label the fix kind for each finding, one call per finding, run in parallel. Act on the probability of the kind you would apply, not on the answer's confidence: accept clear answers (for example above 0.75 or below 0.25) and decide the middle band with written reasoning.
