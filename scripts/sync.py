@@ -111,10 +111,9 @@ def open_pr(repo: Path, base: str, dry_run: bool) -> None:
     if not run("git", "status", "--porcelain", cwd=repo):
         print("already in sync; nothing to commit")
         return
-    # Skill files are Markdown; repo formatters may be unavailable in a fresh worktree.
-    env = {**os.environ, "LEFTHOOK_EXCLUDE": "preflight"}
-    subprocess.run(["git", "commit", "-q", "-m", f"chore: sync team skills from dev-skills ({short})"],
-                   cwd=repo, check=True, env=env)
+    # The commit only adds skill Markdown. Repo pre-commit hooks run formatters and whole
+    # test suites that need installed dependencies, so skip them here; CI runs on the PR.
+    run("git", "commit", "-q", "--no-verify", "-m", f"chore: sync team skills from dev-skills ({short})", cwd=repo)
     print(run("git", "show", "--stat", "--format=%h %s", "HEAD", cwd=repo))
     if dry_run:
         print(f"dry run: branch {branch} committed locally, not pushed")
