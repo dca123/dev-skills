@@ -45,7 +45,8 @@ def run(*cmd, cwd=None, check=True):
 
 def tree_hash(folder: Path) -> str:
     digest = hashlib.sha256()
-    for f in sorted(p for p in folder.rglob("*") if p.is_file() and p.name != MARKER):
+    for f in sorted(p for p in folder.rglob("*")
+                    if p.is_file() and p.name not in (MARKER, ".DS_Store") and "__pycache__" not in p.parts):
         digest.update(str(f.relative_to(folder)).encode())
         digest.update(f.read_bytes())
     return digest.hexdigest()
