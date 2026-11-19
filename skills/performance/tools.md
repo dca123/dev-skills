@@ -1,6 +1,6 @@
 # Profiling with stock tools and the bundled scripts
 
-If the `profile_*` agent tools are loaded, read the `profiling-tools` skill and use those tools for builds, captures, trace reduction and benchmarks. The rest of this file is the path without them.
+If both the `profile_session_start` tool and the `profiling-tools` skill are available, read that skill and use its tools for builds, captures, trace reduction and benchmarks. Otherwise, follow the rest of this file.
 
 Use the project's own profiling setup first when it has one: a project skill, scripts, or agent tools. Its build, deploy and device commands replace the generic ones below. The evidence requirements in [SKILL.md](SKILL.md) apply whichever tools you use.
 
@@ -29,7 +29,7 @@ python3 scripts/reduce.py react-profile.json --window 1200 4800 --out react.sqli
 python3 scripts/reduce.py after.json --map index.map --out after.sqlite --compare run.sqlite
 ```
 
-It ranks self time, inclusive time and share inside the flow window, maps bundle frames to source file and line, and marks frames it cannot map (`mapped = 0`). The SQLite file keeps `traces`, `frames`, `samples` and `stack_samples` for further queries. A trace with no window is refused; `--whole` ranks the entire trace when the recording covered only the flow. An unmapped frame is a hypothesis, not a diagnosis: resolve it with the right source map or report it as unresolved.
+It ranks self time, inclusive time and share inside the flow window, maps bundle frames to source file and line, and marks frames it cannot map (`mapped = 0`). The SQLite file keeps `traces`, `frames`, `costs`, `samples` and `stack_samples` for further queries. React inclusive time is the profiler's actual render duration, which includes children. A trace with no window is refused; `--whole` ranks the entire trace when the recording covered only the flow. An unmapped frame is a hypothesis, not a diagnosis: resolve it with the right source map or report it as unresolved.
 
 ## Comparing benchmarks: `scripts/bench.py`
 

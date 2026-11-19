@@ -60,6 +60,64 @@ class TraceReduction(unittest.TestCase):
         result = reduce_traces([file], self.out / "chrome.sqlite", (0, 5), FIXTURES / "bundle.map")
         self.assertEqual((result["ranked"][0]["self_ms"], result["ranked"][0]["file"]), (5, "src/save.ts"))
 
+    def test_a_cpu_profile_that_starts_after_the_trace_is_windowed_on_the_trace_clock(self):
+        trace = {"traceEvents": [
+            {"name": "TracingStartedInBrowser", "ph": "I", "pid": 1, "tid": 1, "ts": 0},
+            {"name": "Profile", "pid": 1, "tid": 1, "id": "a", "ts": 1000000, "args": {"data": {"startTime": 1000000}}},
+            {"name": "ProfileChunk", "pid": 1, "tid": 1, "id": "a", "args": {"data": {
+                "cpuProfile": {"nodes": [{"id": 1, "callFrame": {"functionName": "save", "url": "index.bundle",
+                                                                 "lineNumber": 0, "columnNumber": 0}}],
+                               "samples": [1, 1]}, "timeDeltas": [1000, 1000]}}}]}
+        file = self.out / "late.json"
+        file.write_text(json.dumps(trace))
+        result = reduce_traces([file], self.out / "late.sqlite", (1000, 1002))
+        self.assertEqual(result["ranked"][0]["self_ms"], 2)
+
+    def test_ios_jsbundle_frames_are_mapped_through_the_source_map(self):
+        profile = json.loads((FIXTURES / "cpu.cpuprofile").read_text())
+        for node in profile["nodes"]:
+            node["callFrame"]["url"] = node["callFrame"]["url"].replace("index.bundle", "main.jsbundle")
+        file = self.out / "ios.cpuprofile"
+        file.write_text(json.dumps(profile))
+        save = next(r for r in reduce_traces([file], self.out / "ios.sqlite", (1, 9), FIXTURES / "bundle.map")["ranked"]
+                    if r["name"] == "save")
+        self.assertEqual((save["file"], save["line"], save["mapped"]), ("src/save.ts", 10, 1))
+
+    def test_a_react_parent_with_no_self_time_keeps_its_inclusive_render_time(self):
+        export = {"version": 5, "dataForRoots": [{"rootID": 1,
+            "snapshots": [[1, {"displayName": "Screen"}], [2, {"displayName": "Row"}]],
+            "commitData": [{"timestamp": 2, "duration": 5,
+                            "fiberSelfDurations": [[1, 0], [2, 5]], "fiberActualDurations": [[1, 5], [2, 5]]}]}]}
+        file = self.out / "nested.json"
+        file.write_text(json.dumps(export))
+        rows = {r["name"]: (r["self_ms"], r["inclusive_ms"]) for r in reduce_traces([file], self.out / "n.sqlite", (0, 10))["ranked"]}
+        self.assertEqual(rows, {"Row": (5, 5), "Screen": (0, 5)})
+
+    def test_a_comparison_keeps_two_frames_on_the_same_line_apart(self):
+        def trace(name, first, second):
+            profile = {"nodes": [{"id": 1, "callFrame": {"functionName": "(root)", "url": "", "lineNumber": -1, "columnNumber": -1},
+                                  "children": [2, 3]},
+                                 {"id": 2, "callFrame": {"functionName": "(anonymous)", "url": "src/a.ts", "lineNumber": 4, "columnNumber": 0}},
+                                 {"id": 3, "callFrame": {"functionName": "(anonymous)", "url": "src/a.ts", "lineNumber": 4, "columnNumber": 9}}],
+                       "samples": [2, 3], "timeDeltas": [first * 1000, second * 1000]}
+            file = self.out / name
+            file.write_text(json.dumps(profile))
+            return file
+        before = reduce_traces([trace("before.cpuprofile", 10, 20)], self.out / "b.sqlite", "whole")
+        after = reduce_traces([trace("after.cpuprofile", 10, 30)], self.out / "a.sqlite", "whole", compare_to=before["sqlite"])
+        changed = [(d["col"], d["delta_ms"]) for d in after["diff"] if d["delta_ms"]]
+        self.assertEqual(changed, [(10, 10)])
+
+    def test_a_failed_reduction_leaves_the_previous_output_in_place(self):
+        out = self.out / "keep.sqlite"
+        reduce_traces([FIXTURES / "react.json"], out)
+        bare = self.out / "bare.cpuprofile"
+        bare.write_text((FIXTURES / "cpu.cpuprofile").read_text())
+        with self.assertRaises(ValueError):
+            reduce_traces([bare], out)
+        with sqlite3.connect(out) as db:
+            self.assertEqual(db.execute("SELECT COUNT(*) FROM traces").fetchone()[0], 1)
+
 
 class BenchmarkVerdict(unittest.TestCase):
     ENV = {"device": "iPad (A16) 26.1 physical", "native_build": "1.0.2 (12)", "flow": "save",
@@ -82,6 +140,11 @@ class BenchmarkVerdict(unittest.TestCase):
             with self.subTest(limiter=limiter):
                 self.assertEqual(compare(baseline, candidate, "lower", 1, limiter)["verdict"], "inconclusive")
         self.assertEqual(compare(self.side([10] * 5), self.side([20] * 5), "lower", 1, "CPU")["verdict"], "slower")
+
+    def test_any_differing_environment_field_is_refused(self):
+        with self.assertRaisesRegex(ValueError, "cache_policy"):
+            compare(self.side([1] * 5, env={**self.ENV, "cache_policy": "warm"}),
+                    self.side([1] * 5, env={**self.ENV, "cache_policy": "cold"}), "lower", 0, "CPU")
 
     def test_a_different_device_or_native_build_is_refused(self):
         for key in ("device", "native_build"):

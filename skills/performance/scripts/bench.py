@@ -16,7 +16,8 @@ run did (rows saved, screens shown); every run on both sides must do the same po
 `--limiter` names the measured resource or source path that bounds the result; an empty limiter
 makes the verdict inconclusive.
 
-Refuses to compare when any environment field differs. Verdicts:
+The five fields above are required. Any other environment field (for example cache_policy) is
+compared too. Refuses to compare when any environment field differs. Verdicts:
   faster / slower             the median gap exceeds the noise (the larger of --noise-floor and
                               each side's full range)
   no measurable difference    the gap is within the noise
@@ -52,8 +53,12 @@ def summarize(runs):
 
 def same_environment(before, after):
     for key in ENVIRONMENT:
-        if before.get(key) is None or before.get(key) != after.get(key):
-            raise ValueError(f"Comparison refused: {key} differs or is missing: {before.get(key)!r} vs {after.get(key)!r}")
+        if before.get(key) is None or after.get(key) is None:
+            raise ValueError(f"Comparison refused: {key} is missing")
+    differing = sorted(k for k in before.keys() | after.keys() if before.get(k) != after.get(k))
+    if differing:
+        raise ValueError("Comparison refused: " + ", ".join(
+            f"{k} differs: {before.get(k)!r} vs {after.get(k)!r}" for k in differing))
 
 
 def compare(before, after, direction, floor, limiter):
