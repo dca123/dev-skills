@@ -1,5 +1,7 @@
 # Profiling with stock tools and the bundled scripts
 
+If the `profile_*` agent tools are loaded, read the `profiling-tools` skill and use those tools for builds, captures, trace reduction and benchmarks. The rest of this file is the path without them.
+
 Use the project's own profiling setup first when it has one: a project skill, scripts, or agent tools. Its build, deploy and device commands replace the generic ones below. The evidence requirements in [SKILL.md](SKILL.md) apply whichever tools you use.
 
 ## Builds
