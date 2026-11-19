@@ -14,13 +14,15 @@ Window: milliseconds from the start of each trace. A file `<trace>.flow.json` co
 use it only when the trace was recorded around the flow and nothing else.
 
 `--map` is the flat v3 source map of the exact bundle that ran, so bundle frames resolve to
-source file and line. Frames that cannot be mapped stay marked unmapped (mapped = 0).
+source file and line. Frames that cannot be mapped stay marked unmapped (mapped = 0) and keep
+their generated URL, line and column, so distinct functions with one name stay apart.
 
 CPU frames from the executing bundle (`.bundle`, `.jsbundle`, `.hbc`, or the map's `file`) are
 mapped through `--map`; other frames with a URL and line keep those coordinates.
 
 Prints JSON with the ranked rows (self and inclusive milliseconds, share of the trace kind's
-total) and, with `--compare`, the per-frame self-time delta against an earlier output. React
+total) and, with `--compare`, the per-frame self-time delta against an earlier output
+(each frame's `location` is its source location, or its generated one when unmapped). React
 inclusive time is the profiler's actual duration. The SQLite file keeps traces, frames, costs,
 samples and stack_samples for further queries. It replaces OUT only when reduction succeeds.
 Python 3.9+ standard library only.
@@ -174,7 +176,8 @@ def cpu_rows(data, source_map):
                 mapping = source_map.lookup(frame.get("lineNumber", -1), frame.get("columnNumber", -1))
             elif frame.get("url") and frame.get("lineNumber", -1) >= 0 and not in_bundle:
                 mapping = (frame["url"], frame["lineNumber"] + 1, frame.get("columnNumber", 0) + 1)
-            stack.append((frame.get("functionName") or "(anonymous)", mapping))
+            generated = (frame.get("url", ""), frame.get("lineNumber", -1), frame.get("columnNumber", -1))
+            stack.append((frame.get("functionName") or "(anonymous)", mapping, generated))
             current = parents.get(current)
         yield elapsed, duration, stack
         elapsed += duration
@@ -199,7 +202,7 @@ def ranked(db, top):
     db.row_factory = sqlite3.Row
     return [dict(row) for row in db.execute("""
         WITH totals AS (SELECT t.kind, SUM(c.self_ms) total FROM costs c JOIN traces t ON c.trace_id=t.id GROUP BY t.kind)
-        SELECT t.kind, f.name, f.file, f.line, f.col, f.mapped,
+        SELECT t.kind, f.name, f.file, f.line, f.col, f.mapped, f.generated_url, f.generated_line, f.generated_col,
           SUM(c.self_ms) self_ms, SUM(c.inclusive_ms) inclusive_ms, SUM(c.self_ms)/NULLIF(totals.total, 0) share
         FROM costs c JOIN traces t ON t.id=c.trace_id JOIN frames f ON f.id=c.frame_id JOIN totals ON totals.kind=t.kind
         GROUP BY t.kind, f.id ORDER BY self_ms DESC, inclusive_ms DESC LIMIT ?
@@ -219,13 +222,16 @@ def window_for(trace, window):
 
 def reduce_traces(traces, out, window=None, source_map=None, top=20, compare_to=None):
     out = Path(out)
+    if compare_to and out.resolve() == Path(compare_to).resolve():
+        raise ValueError("--out and --compare are the same file; write the new reduction somewhere else")
     temp = out.with_name(f".{out.name}.{os.getpid()}.tmp")
     temp.unlink(missing_ok=True)
     db = sqlite3.connect(temp)
     try:
         db.executescript("""
             CREATE TABLE traces(id INTEGER PRIMARY KEY, path TEXT, kind TEXT, start_ms REAL, end_ms REAL);
-            CREATE TABLE frames(id INTEGER PRIMARY KEY, name TEXT, file TEXT, line INTEGER, col INTEGER, mapped INTEGER);
+            CREATE TABLE frames(id INTEGER PRIMARY KEY, name TEXT, file TEXT, line INTEGER, col INTEGER, mapped INTEGER,
+                                generated_url TEXT, generated_line INTEGER, generated_col INTEGER);
             CREATE TABLE costs(trace_id INTEGER, frame_id INTEGER, start_ms REAL, self_ms REAL, inclusive_ms REAL);
             CREATE TABLE samples(trace_id INTEGER, start_ms REAL, duration_ms REAL, leaf INTEGER);
             CREATE TABLE stack_samples(sample_id INTEGER, frame_id INTEGER, depth INTEGER);
@@ -234,12 +240,17 @@ def reduce_traces(traces, out, window=None, source_map=None, top=20, compare_to=
         mapper = SourceMap(source_map) if source_map else None
         frames = {}
 
-        def frame_id(name, mapping):
-            key = (name, mapping)
+        def frame_id(name, mapping, generated=None):
+            # An unmapped frame keeps its generated location as identity, so distinct
+            # same-named functions stay apart; it is still stored as unmapped.
+            key = (name, mapping or generated)
             if key not in frames:
                 file, line, col = mapping if mapping else (None, None, None)
-                frames[key] = db.execute("INSERT INTO frames(name,file,line,col,mapped) VALUES(?,?,?,?,?)",
-                                         (name, file, line, col, int(mapping is not None))).lastrowid
+                url, gline, gcol = generated if generated else (None, None, None)
+                frames[key] = db.execute(
+                    "INSERT INTO frames(name,file,line,col,mapped,generated_url,generated_line,generated_col)"
+                    " VALUES(?,?,?,?,?,?,?,?)",
+                    (name, file, line, col, int(mapping is not None), url, gline, gcol)).lastrowid
             return frames[key]
 
         for index, trace in enumerate(traces, 1):
@@ -265,7 +276,7 @@ def reduce_traces(traces, out, window=None, source_map=None, top=20, compare_to=
                 weight = max(0, min(start + duration, high) - max(start, low))
                 if weight <= 0:
                     continue
-                ids = list(dict.fromkeys(frame_id(name, mapping) for name, mapping in stack))
+                ids = list(dict.fromkeys(frame_id(*entry) for entry in stack))
                 sample = db.execute("INSERT INTO samples VALUES(?,?,?,?)", (index, start, weight, ids[0])).lastrowid
                 db.executemany("INSERT INTO stack_samples VALUES(?,?,?)",
                                [(sample, frame, depth) for depth, frame in enumerate(ids)])
@@ -278,13 +289,15 @@ def reduce_traces(traces, out, window=None, source_map=None, top=20, compare_to=
         diff = []
         if compare_to:
             def identity(row):
-                return row["kind"], row["name"], row["file"], row["line"], row["col"]
+                location = (row["file"], row["line"], row["col"]) if row["mapped"] else \
+                    (row["generated_url"], row["generated_line"], row["generated_col"])
+                return (row["kind"], row["name"], *location)
             with sqlite3.connect(f"file:{Path(compare_to).resolve()}?mode=ro", uri=True) as previous:
                 before = {identity(r): r for r in ranked(previous, 10**6)}
             after = {identity(r): r for r in ranked(db, 10**6)}
             for key in before.keys() | after.keys():
                 a, b = before.get(key, {}), after.get(key, {})
-                diff.append({"kind": key[0], "name": key[1], "file": key[2], "line": key[3], "col": key[4],
+                diff.append({"kind": key[0], "name": key[1], "location": list(key[2:]),
                              "before_ms": a.get("self_ms", 0), "after_ms": b.get("self_ms", 0),
                              "delta_ms": b.get("self_ms", 0) - a.get("self_ms", 0)})
             diff.sort(key=lambda row: abs(row["delta_ms"]), reverse=True)

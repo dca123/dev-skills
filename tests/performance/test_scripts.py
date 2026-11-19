@@ -105,8 +105,27 @@ class TraceReduction(unittest.TestCase):
             return file
         before = reduce_traces([trace("before.cpuprofile", 10, 20)], self.out / "b.sqlite", "whole")
         after = reduce_traces([trace("after.cpuprofile", 10, 30)], self.out / "a.sqlite", "whole", compare_to=before["sqlite"])
-        changed = [(d["col"], d["delta_ms"]) for d in after["diff"] if d["delta_ms"]]
+        changed = [(d["location"][2], d["delta_ms"]) for d in after["diff"] if d["delta_ms"]]
         self.assertEqual(changed, [(10, 10)])
+
+    def test_unmapped_frames_with_one_name_stay_apart_by_generated_location(self):
+        profile = {"nodes": [{"id": 1, "callFrame": {"functionName": "(root)", "url": "", "lineNumber": -1, "columnNumber": -1},
+                              "children": [2, 3]},
+                             {"id": 2, "callFrame": {"functionName": "(anonymous)", "url": "index.bundle", "lineNumber": 0, "columnNumber": 5}},
+                             {"id": 3, "callFrame": {"functionName": "(anonymous)", "url": "index.bundle", "lineNumber": 0, "columnNumber": 90}}],
+                   "samples": [2, 3], "timeDeltas": [1000, 9000]}
+        file = self.out / "unmapped.cpuprofile"
+        file.write_text(json.dumps(profile))
+        rows = [(r["self_ms"], r["mapped"], r["generated_col"]) for r in reduce_traces([file], self.out / "u.sqlite", "whole")["ranked"]
+                if r["name"] == "(anonymous)"]
+        self.assertEqual(rows, [(9, 0, 90), (1, 0, 5)])
+
+    def test_an_output_that_is_also_the_comparison_baseline_is_refused(self):
+        baseline = reduce_traces([FIXTURES / "react.json"], self.out / "base.sqlite")["sqlite"]
+        with self.assertRaisesRegex(ValueError, "same file"):
+            reduce_traces([FIXTURES / "react.json"], baseline, compare_to=baseline)
+        with sqlite3.connect(baseline) as db:
+            self.assertEqual(db.execute("SELECT COUNT(*) FROM traces").fetchone()[0], 1)
 
     def test_a_failed_reduction_leaves_the_previous_output_in_place(self):
         out = self.out / "keep.sqlite"
@@ -145,6 +164,10 @@ class BenchmarkVerdict(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "cache_policy"):
             compare(self.side([1] * 5, env={**self.ENV, "cache_policy": "warm"}),
                     self.side([1] * 5, env={**self.ENV, "cache_policy": "cold"}), "lower", 0, "CPU")
+
+    def test_a_field_present_on_one_side_only_is_refused(self):
+        with self.assertRaisesRegex(ValueError, "cache_policy"):
+            compare(self.side([1] * 5, env={**self.ENV, "cache_policy": None}), self.side([1] * 5), "lower", 0, "CPU")
 
     def test_a_different_device_or_native_build_is_refused(self):
         for key in ("device", "native_build"):

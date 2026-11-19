@@ -55,7 +55,8 @@ def same_environment(before, after):
     for key in ENVIRONMENT:
         if before.get(key) is None or after.get(key) is None:
             raise ValueError(f"Comparison refused: {key} is missing")
-    differing = sorted(k for k in before.keys() | after.keys() if before.get(k) != after.get(k))
+    differing = sorted(k for k in before.keys() | after.keys()
+                       if k not in before or k not in after or before[k] != after[k])
     if differing:
         raise ValueError("Comparison refused: " + ", ".join(
             f"{k} differs: {before.get(k)!r} vs {after.get(k)!r}" for k in differing))
