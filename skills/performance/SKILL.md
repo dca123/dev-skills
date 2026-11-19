@@ -13,7 +13,7 @@ Before measuring, agree with the user on the claim to ship, the flow, the metric
 
 Choose a workload that reproduces the complaint. Record data size, account/tenant, cache state, concurrency, and preparation. Check the measurement script for what it times, counts, and omits. Prove its sensitivity with contrasting realistic workloads before freezing it. If it cannot distinguish them or reproduce the complaint, repair the measurement before optimizing.
 
-Use the `profile_*` tools when available. Read [tools.md](tools.md) before setup, captures, or comparisons. Without those tools, use the app's build/deploy commands, its device automation, stock React and runtime CPU profilers, a SQLite importer, and a repeatable benchmark script with the same evidence requirements. Do not replace end-to-end timing with tool-call duration.
+Read [tools.md](tools.md) before building, capturing, reducing traces or comparing runs. It covers the project's own profiling setup when there is one, the stock React Native profilers otherwise, and the bundled `scripts/reduce.py` and `scripts/bench.py`. Time the flow end to end on the device; how long a tool call took is not the metric.
 
 ## Baseline
 
@@ -25,7 +25,7 @@ Collect a clean Release/benchmark baseline without attached profilers. Report at
 
 In a separate Profile run, capture React components and CPU stacks around the same flow. Confirm start/end markers and that the intended work completed. After a push, re-prove bundle execution and both profilers' current readiness before recording. A successful reload response, listening port, or previous capture proves neither.
 
-Import traces into queryable SQLite before analyzing them. Rank self and inclusive cost within the flow window. Map hot frames to source file and line with the executing artifact's source map. React totals are not wall time, inclusive stacks overlap, and profiler overhead is not a benchmark. A frame without a source mapping remains a hypothesis. Resolve it or state the missing evidence.
+Reduce traces into queryable SQLite with `scripts/reduce.py` before analyzing them. Rank self and inclusive cost within the flow window. Map hot frames to source file and line with the executing artifact's source map. React totals are not wall time, inclusive stacks overlap, and profiler overhead is not a benchmark. A frame without a source mapping remains a hypothesis. Resolve it or state the missing evidence.
 
 ## Improve
 
@@ -43,11 +43,11 @@ Manual mode: set up the verified build and both profilers, then let the user rec
 
 Loop mode: make one change, measure it with the frozen benchmark, run the correctness gate, then keep or revert that change. Never stack unmeasured candidates. Keep an external `decision.tsv` with attempt, hypothesis, change, before/after, delta, tests, verdict, and evidence paths. Read it before each attempt. Commit accepted changes separately and preserve unrelated edits.
 
-Push past the first plateau. After repeated rejects, change hypothesis category, inspect a fresh trace, or revisit workload assumptions. Stop when the agreed target and attempt floor hold, or when genuinely blocked. Do not lower the target or end an authorized loop at a child-task handoff. Explain a blocker with the evidence and remaining ideas.
+Push past the first plateau. After repeated rejects, change hypothesis category, inspect a fresh trace, or revisit workload assumptions. Stop when the agreed target and attempt floor hold, or when genuinely blocked. Keep the agreed target, and keep looping until one of those holds. Explain a blocker with the evidence and remaining ideas.
 
 ## Prove
 
-Return to the clean benchmark build. Alternate at least five runs per side, A, B, A, B, with equal work and independent warmups. Preserve the same device, native build, workload, flags, versions, and cache policy. Check errors and durable/output proof inside the timed region on every run. A failed or uncertain Save is not retried blindly.
+Return to the clean benchmark build. Alternate at least five runs per side, A, B, A, B, with equal work and independent warmups. Preserve the same device, native build, workload, flags, versions, and cache policy. Check errors and durable/output proof inside the timed region on every run. A failed or uncertain run is investigated, not retried until it passes. Compare the two sides with `scripts/bench.py`.
 
 Compare the gap with the noise floor and within-side variation. Report faster, slower, no measurable difference, or inconclusive. Missing work/error evidence, untuned builds, or an unexplained limiter make the verdict inconclusive. Ask "why not double?" and name the limiting resource or source path from a separate profile or counters. Check the arithmetic against the measured share of the whole; a helper that costs 1% cannot explain a 30% end-to-end gain.
 
@@ -57,4 +57,4 @@ Report the claim, baseline and candidate medians with units and ranges, all run 
 
 If the user wants ongoing tracking, confirm the same metric and workload in production telemetry such as PostHog. Agree release/cohort boundaries, sample count, and privacy before adding telemetry. Local benchmarks do not prove a production gain. Ask whether temporary timing instrumentation should stay in the code, then remove or retain it according to that decision.
 
-Method adapted from pstack's performance, hillclimb, trace-forensics, benchmark-checklist, and explain-the-number guidance. See the repository's `LICENSE-pstack`.
+Method adapted from pstack's performance, hillclimb, trace-forensics, benchmark-checklist, and explain-the-number guidance. See `LICENSE-pstack` in this folder.

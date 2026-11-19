@@ -2,6 +2,15 @@
   "name": "dev-skills",
   "private": true,
   "description": "Portable engineering standards as agent skills: testing, comments, data shape. Works with pi and Claude Code.",
-  "keywords": ["pi-package"],
-  "pi": { "skills": ["./skills"] }
+  "keywords": [
+    "pi-package"
+  ],
+  "pi": {
+    "skills": [
+      "./skills"
+    ]
+  },
+  "scripts": {
+    "test": "python3 -m unittest discover -s tests -t . -v"
+  }
 }

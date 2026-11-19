@@ -1,0 +1,93 @@
+"""Authority: the Chrome/Hermes CPU profile and React DevTools export formats, the v3 source-map
+spec, and Dev's benchmark rules (>=5 runs a side, same device and build, equal work, no errors,
+a named limiter). Run: python3 -m unittest discover -s tests -v
+"""
+
+import json
+from pathlib import Path
+import sqlite3
+import sys
+import tempfile
+import unittest
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "skills/performance/scripts"))
+from bench import compare  # noqa: E402
+from reduce import reduce_traces  # noqa: E402
+
+FIXTURES = Path(__file__).parent / "fixtures"
+
+
+class TraceReduction(unittest.TestCase):
+    def setUp(self):
+        self.temp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.temp.cleanup)
+        self.out = Path(self.temp.name)
+
+    def test_cpu_time_is_clipped_to_the_flow_window_and_mapped_or_marked_unmapped(self):
+        result = reduce_traces([FIXTURES / "cpu.cpuprofile"], self.out / "cpu.sqlite", source_map=FIXTURES / "bundle.map")
+        save = next(r for r in result["ranked"] if r["name"] == "save")
+        self.assertEqual({k: save[k] for k in ("file", "line", "col", "self_ms", "share", "mapped")},
+                         {"file": "src/save.ts", "line": 10, "col": 3, "self_ms": 6, "share": 0.75, "mapped": 1})
+        unknown = next(r for r in result["ranked"] if r["name"] == "unknown")
+        self.assertEqual((unknown["file"], unknown["mapped"], unknown["self_ms"]), (None, 0, 2))
+        with sqlite3.connect(result["sqlite"]) as db:
+            self.assertEqual(db.execute("SELECT SUM(duration_ms) FROM samples").fetchone()[0], 8)
+
+    def test_react_self_time_counts_only_commits_inside_the_window_and_compares_runs(self):
+        result = reduce_traces([FIXTURES / "react.json"], self.out / "react.sqlite")
+        self.assertEqual([(r["name"], r["self_ms"], r["mapped"]) for r in result["ranked"]],
+                         [("SaveForm", 5, 1), ("LegWorksheet", 2, 0)])
+        later = reduce_traces([FIXTURES / "react.json"], self.out / "after.sqlite", (0, 30), compare_to=result["sqlite"])
+        self.assertEqual(later["diff"][0]["delta_ms"], 2)
+
+    def test_a_trace_without_a_window_is_refused_rather_than_ranked_whole(self):
+        trace = self.out / "bare.cpuprofile"
+        trace.write_text((FIXTURES / "cpu.cpuprofile").read_text())
+        with self.assertRaisesRegex(ValueError, "No window"):
+            reduce_traces([trace], self.out / "bad.sqlite")
+        whole = reduce_traces([trace], self.out / "whole.sqlite", "whole")
+        self.assertEqual(sum(r["self_ms"] for r in whole["ranked"] if r["name"] != "(root)"), 10)
+
+    def test_chrome_trace_chunks_keep_sample_deltas_and_source_attribution(self):
+        trace = {"traceEvents": [
+            {"name": "Profile", "pid": 1, "tid": 1, "id": "a", "args": {"data": {"startTime": 100000}}},
+            {"name": "ProfileChunk", "pid": 1, "tid": 1, "id": "a", "args": {"data": {
+                "cpuProfile": {"nodes": [{"id": 1, "callFrame": {"functionName": "save", "url": "index.bundle",
+                                                                 "lineNumber": 0, "columnNumber": 0}}],
+                               "samples": [1, 1]}, "timeDeltas": [2000, 3000]}}}]}
+        file = self.out / "chrome.json"
+        file.write_text(json.dumps(trace))
+        result = reduce_traces([file], self.out / "chrome.sqlite", (0, 5), FIXTURES / "bundle.map")
+        self.assertEqual((result["ranked"][0]["self_ms"], result["ranked"][0]["file"]), (5, "src/save.ts"))
+
+
+class BenchmarkVerdict(unittest.TestCase):
+    ENV = {"device": "iPad (A16) 26.1 physical", "native_build": "1.0.2 (12)", "flow": "save",
+           "metric": "visible ms", "workload": "50 legs"}
+
+    def side(self, values, errors=0, work=1, env=None):
+        return {"environment": env or self.ENV,
+                "runs": [{"value": v, "error_count": errors, "work_count": work, "proof": "row persisted"} for v in values]}
+
+    def test_a_gap_past_the_noise_is_faster(self):
+        result = compare(self.side([99, 100, 101, 100, 100]), self.side([79, 80, 81, 80, 80]), "lower", 1, "query CPU")
+        self.assertEqual((result["before"]["median"], result["after"]["median"], result["noise"], result["verdict"]),
+                         (100, 80, 2, "faster"))
+
+    def test_noise_errors_skipped_work_too_few_runs_or_no_limiter_are_not_wins(self):
+        baseline = self.side([90, 100, 110, 100, 100])
+        self.assertEqual(compare(baseline, self.side([95] * 5), "lower", 1, "CPU")["verdict"], "no measurable difference")
+        for candidate, limiter in [(self.side([50] * 5, errors=1), "CPU"), (self.side([50] * 5, work=0), "CPU"),
+                                   (self.side([50] * 4), "CPU"), (self.side([50] * 5), "")]:
+            with self.subTest(limiter=limiter):
+                self.assertEqual(compare(baseline, candidate, "lower", 1, limiter)["verdict"], "inconclusive")
+        self.assertEqual(compare(self.side([10] * 5), self.side([20] * 5), "lower", 1, "CPU")["verdict"], "slower")
+
+    def test_a_different_device_or_native_build_is_refused(self):
+        for key in ("device", "native_build"):
+            with self.subTest(key=key), self.assertRaisesRegex(ValueError, key):
+                compare(self.side([1] * 5), self.side([1] * 5, env={**self.ENV, key: "other"}), "lower", 0, "CPU")
+
+
+if __name__ == "__main__":
+    unittest.main()

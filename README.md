@@ -13,8 +13,9 @@ These skills hold rules only. Project-specific conventions and worked examples s
 | `principle-fix-root-causes` | Debugging: fix where the system first went wrong, and choose a local or structural fix. |
 | `principle-separate-before-serializing-shared-state` | Concurrent writers: separate the state before reaching for a lock. |
 | `principle-make-operations-idempotent` | Operations that converge however often they run and wherever they stopped. |
+| `performance` | Find why a flow is slow and prove an improvement. Ships `scripts/reduce.py` (profile → ranked, source-mapped SQLite) and `scripts/bench.py` (benchmark verdict). |
 
-The three principles are adapted from [pstack](https://github.com/cursor/plugins/tree/main/pstack) (MIT, see `LICENSE-pstack`).
+The three principles and `performance` are adapted from [pstack](https://github.com/cursor/plugins/tree/main/pstack) (MIT). Each of those skill folders carries `LICENSE-pstack`, so the notice travels with every copy.
 
 ## Install
 
