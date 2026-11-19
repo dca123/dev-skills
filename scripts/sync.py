@@ -34,6 +34,7 @@ TEAM = [
     "principle-fix-root-causes",
     "principle-separate-before-serializing-shared-state",
     "principle-make-operations-idempotent",
+    "performance",
 ]
 MARKER = ".dev-skills.json"
 
