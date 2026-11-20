@@ -118,6 +118,23 @@ class TraceReduction(unittest.TestCase):
         rows = {r["name"]: (r["self_ms"], r["inclusive_ms"]) for r in reduce_traces([file], self.out / "n.sqlite", (0, 10))["ranked"]}
         self.assertEqual(rows, {"Row": (5, 5), "Screen": (0, 5)})
 
+    def test_react_fibers_without_source_locations_are_ranked_but_not_compared(self):
+        def recording(label, source, baseline=None):
+            export = {"version": 5, "dataForRoots": [{"rootID": 1,
+                "snapshots": [[1, {"displayName": "Screen"}]],
+                "sourceLocations": [[1, {"file": source, "line": 1}]],
+                "commitData": [{"timestamp": 2, "duration": 21, "fiberSelfDurations": [[1, 1], [42, 20]]}]}]}
+            file = self.out / f"{label}.json"
+            file.write_text(json.dumps(export))
+            return reduce_traces([file], self.out / f"{label}.sqlite", "whole", compare_to=baseline)
+
+        before = recording("before", "src/Before.tsx")
+        after = recording("after", "src/After.tsx", before["sqlite"])
+        for result in (before, after):
+            self.assertEqual((result["ranked"][0]["name"], result["ranked"][0]["self_ms"]), ("fiber-42", 20))
+        self.assertCountEqual([(row["location"], row["delta_ms"]) for row in after["diff"]],
+                              [(["src/Before.tsx", 1, 1], -1), (["src/After.tsx", 1, 1], 1)])
+
     def test_a_comparison_keeps_two_frames_on_the_same_line_apart(self):
         def trace(name, first, second):
             profile = {"nodes": [{"id": 1, "callFrame": {"functionName": "(root)", "url": "", "lineNumber": -1, "columnNumber": -1},

@@ -24,8 +24,10 @@ mapped through `--map`; other frames with a URL and line keep those coordinates.
 
 Prints JSON with the ranked rows (self and inclusive milliseconds, share of the trace kind's
 total) and, with `--compare`, self-time deltas against an earlier output. Mapped rows at the
-same source file, line and column are summed regardless of name. Unmapped rows keep their
-generated location and name. React inclusive time is the profiler's actual duration.
+same source file, line and column are summed regardless of name. Unmapped CPU rows keep their
+generated location and name. React rows without a source location appear in the ranking but
+not in the diff because names and recording-local IDs can match unrelated fibers.
+React inclusive time is the profiler's actual duration.
 The SQLite file keeps traces, frames, costs, samples and stack_samples for further queries.
 It replaces OUT only when reduction succeeds.
 Python 3.9+ standard library only.
@@ -222,9 +224,11 @@ def comparison_totals(db):
         if row["mapped"]:
             location = (row["file"], row["line"], row["col"])
             key = (row["kind"], location, None)
-        else:
+        elif row["kind"] == "cpu":
             location = (row["generated_url"], row["generated_line"], row["generated_col"])
             key = (row["kind"], location, row["name"])
+        else:
+            continue
         total = totals.setdefault(key, {"name": row["name"], "self_ms": 0})
         total["self_ms"] += row["self_ms"]
     return totals
@@ -322,7 +326,8 @@ def reduce_traces(traces, out, window=None, source_map=None, top=20, compare_to=
         db.close()
         os.replace(temp, out)
         return {"sqlite": str(out), "ranked": ranking, "diff": diff[:top],
-                "note": "unmapped frames (mapped = 0) are hypotheses, not source diagnoses"}
+                "note": "unmapped frames (mapped = 0) are hypotheses, not source diagnoses; "
+                        "React rows without a source location are excluded from comparisons"}
     except BaseException:
         db.close()
         temp.unlink(missing_ok=True)

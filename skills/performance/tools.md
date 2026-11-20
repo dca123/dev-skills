@@ -31,7 +31,7 @@ python3 scripts/reduce.py after.json --map index.map --out after.sqlite --compar
 
 It ranks self time, inclusive time and share inside the flow window, maps bundle frames to source file and line, and marks frames it cannot map (`mapped = 0`). The SQLite file keeps `traces`, `frames`, `costs`, `samples` and `stack_samples` for further queries. React inclusive time is the profiler's actual render duration, which includes children. A trace with no window is refused; `--whole` ranks the entire trace when the recording covered only the flow. An unmapped frame is a hypothesis, not a diagnosis: resolve it with the right source map or report it as unresolved.
 
-React names come from the initial snapshots. Components mounted during the recording can appear as `fiber-<id>` because the reducer does not decode commit operations. Do not match these IDs across recordings. To name them, inspect the commit in React DevTools, or start another attribution capture after the component has mounted.
+React names come from the initial snapshots. Components mounted during the recording can appear as `fiber-<id>` because the reducer does not decode commit operations. To name them, inspect the commit in React DevTools, or start another attribution capture after the component has mounted. React rows without a source location stay in the ranking but are omitted from `--compare`: a name or recording-local ID can match an unrelated component in another recording.
 
 ## Comparing benchmarks: `scripts/bench.py`
 
