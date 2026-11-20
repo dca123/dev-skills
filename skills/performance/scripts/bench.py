@@ -23,6 +23,7 @@ compared too. Refuses to compare when any environment field differs. Verdicts:
   no measurable difference    the gap is within the noise
   inconclusive                fewer than 5 runs a side, any errors, unequal or missing work,
                               missing proof, or no limiter
+The side's total `work_count` is null if any run is missing that count.
 Prints JSON. Python 3.9+ standard library only.
 """
 
@@ -45,10 +46,12 @@ def summarize(runs):
     values = [finite(r["value"]) for r in runs]
     if not values:
         raise ValueError("No measured runs")
-    if any(v < 0 for v in values) or any(finite(r["error_count"]) < 0 or finite(r["work_count"]) < 0 for r in runs):
+    errors = [finite(r["error_count"]) for r in runs]
+    work = [finite(r["work_count"]) for r in runs if "work_count" in r]
+    if min(values) < 0 or min(errors) < 0 or min(work, default=0) < 0:
         raise ValueError("Values, error counts and work counts cannot be negative")
     return {"median": median(values), "range": [min(values), max(values)], "count": len(values),
-            "error_count": sum(r["error_count"] for r in runs), "work_count": sum(r["work_count"] for r in runs)}
+            "error_count": sum(errors), "work_count": sum(work) if len(work) == len(runs) else None}
 
 
 def same_environment(before, after):
@@ -71,6 +74,7 @@ def compare(before, after, direction, floor, limiter):
     noise = max(finite(floor), a["range"][1] - a["range"][0], b["range"][1] - b["range"][0])
     delta = b["median"] - a["median"]
     invalid = (len(runs_a) < 5 or len(runs_b) < 5 or a["error_count"] or b["error_count"]
+               or a["work_count"] is None or b["work_count"] is None
                or any(r["work_count"] <= 0 or not r.get("proof") for r in runs_a + runs_b)
                or len({r["work_count"] for r in runs_a + runs_b}) != 1 or not limiter)
     if invalid:

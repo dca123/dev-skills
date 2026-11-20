@@ -6,10 +6,10 @@ Use the project's own profiling setup first when it has one: a project skill, sc
 
 ## Builds
 
-Measure on a Release build, never a development (Metro dev) build: dev mode adds checks and disables optimizations, so its timings mislead. Keep two builds of the same commit when the platform allows:
+Use separate builds of the same commit for benchmark timings and attribution:
 
-- **Benchmark:** Release, no profilers attached. Used for baselines and the final proof.
-- **Profile:** Release with profiling enabled. Used to attribute time. Its numbers are not benchmark numbers.
+- **Benchmark:** Use Release with no profilers attached for all baseline and comparison numbers. Development mode adds checks and disables optimizations.
+- **Profile:** For stock React Native, use the iOS scheme's `Debug` configuration or the Android `debug` variant with Hermes and Metro in development mode. Open DevTools from the Dev Menu and confirm the Performance and React Profiler panels connect before recording. React Native [disables DevTools in Release](https://reactnative.dev/docs/0.85/debugging); use these captures to locate work, not to time a speedup. In CompleteFlight, use the project toolkit's `Profile` mode for attribution and `Benchmark` mode for Release timings.
 
 Record the native build identity (version and build number, or binary hash) and the JS bundle identity (commit plus bundle hash) for every run. After a JS-only change, prove the app runs the new bundle: a reload that returns success, or a listening dev server, proves neither.
 
@@ -31,12 +31,14 @@ python3 scripts/reduce.py after.json --map index.map --out after.sqlite --compar
 
 It ranks self time, inclusive time and share inside the flow window, maps bundle frames to source file and line, and marks frames it cannot map (`mapped = 0`). The SQLite file keeps `traces`, `frames`, `costs`, `samples` and `stack_samples` for further queries. React inclusive time is the profiler's actual render duration, which includes children. A trace with no window is refused; `--whole` ranks the entire trace when the recording covered only the flow. An unmapped frame is a hypothesis, not a diagnosis: resolve it with the right source map or report it as unresolved.
 
+React names come from the initial snapshots. Components mounted during the recording can appear as `fiber-<id>` because the reducer does not decode commit operations. Do not match these IDs across recordings. To name them, inspect the commit in React DevTools, or start another attribution capture after the component has mounted.
+
 ## Comparing benchmarks: `scripts/bench.py`
 
 ```sh
 python3 scripts/bench.py before.json after.json --direction lower --noise-floor 20 --limiter "SQLite write on the JS thread"
 ```
 
-Each side's file holds the environment (device, native build, flow, metric, workload) and every measured run with its value, error count, work count and proof; `--help` shows the format. It refuses to compare different environments. It returns faster, slower, no measurable difference, or inconclusive. Fewer than five runs a side, any errors, unequal work, missing proof or no limiter make the verdict inconclusive. Warmups stay out of the files. Alternate the two sides when collecting runs.
+Each side's file holds the environment (device, native build, flow, metric, workload) and every measured run with its value, error count, work count and proof; `--help` shows the format. It refuses to compare different environments. It returns faster, slower, no measurable difference, or inconclusive. Fewer than five runs a side, any errors, missing or unequal work counts, missing proof or no limiter make the verdict inconclusive. Warmups stay out of the files. Alternate the two sides when collecting runs.
 
 Both scripts need only Python 3.9+ and its standard library.

@@ -6,7 +6,9 @@
 Inputs:
   - CPU: a Hermes/Chrome `.cpuprofile`, or a Chrome trace JSON with Profile/ProfileChunk events
     (React Native DevTools > Performance > Save profile).
-  - React: a React DevTools Profiler export (Profiler > Save profile).
+  - React: a React DevTools Profiler export (Profiler > Save profile). Names come from the
+    initial snapshots. Fibers named only in commit operations appear as `fiber-<id>`;
+    those IDs are local to a recording and do not identify components across recordings.
   - `.gz` files are read directly.
 
 Window: milliseconds from the start of each trace. A file `<trace>.flow.json` containing
@@ -21,10 +23,11 @@ CPU frames from the executing bundle (`.bundle`, `.jsbundle`, `.hbc`, or the map
 mapped through `--map`; other frames with a URL and line keep those coordinates.
 
 Prints JSON with the ranked rows (self and inclusive milliseconds, share of the trace kind's
-total) and, with `--compare`, the per-frame self-time delta against an earlier output
-(each frame's `location` is its source location, or its generated one when unmapped). React
-inclusive time is the profiler's actual duration. The SQLite file keeps traces, frames, costs,
-samples and stack_samples for further queries. It replaces OUT only when reduction succeeds.
+total) and, with `--compare`, self-time deltas against an earlier output. Mapped rows at the
+same source file, line and column are summed regardless of name. Unmapped rows keep their
+generated location and name. React inclusive time is the profiler's actual duration.
+The SQLite file keeps traces, frames, costs, samples and stack_samples for further queries.
+It replaces OUT only when reduction succeeds.
 Python 3.9+ standard library only.
 """
 
@@ -116,7 +119,7 @@ def cpu_profile(data):
     events = data.get("traceEvents", [])
     starts = {}
     profiles = {}
-    for event in data.get("traceEvents", []):
+    for event in events:
         args = event.get("args", {}).get("data", {})
         if event.get("name") == "CpuProfile" and "cpuProfile" in args:
             key = (event.get("pid"), event.get("tid"), event.get("id", "standalone"))
@@ -127,7 +130,8 @@ def cpu_profile(data):
         key = (event.get("pid"), event.get("tid"), event.get("id", event.get("id2", {}).get("local", "default")))
         profile = profiles.setdefault(key, {"nodes": [], "samples": [], "timeDeltas": []})
         if event.get("name") == "Profile":
-            starts[key] = args.get("startTime", event.get("ts"))
+            # The payload uses CLOCK_MONOTONIC; ts is on the same clock as the recording events.
+            starts[key] = event.get("ts")
         chunk = args.get("cpuProfile", {})
         profile["nodes"].extend(chunk.get("nodes", []))
         profile["samples"].extend(chunk.get("samples", []))
@@ -137,7 +141,10 @@ def cpu_profile(data):
         raise ValueError("Trace must contain exactly one sampled CPU profile; split it by target/thread first")
     key = sampled[0]
     start = starts.get(key)
-    clocks = [e["ts"] for e in events if isinstance(e.get("ts"), (int, float))] + [t for t in starts.values() if t is not None]
+    clocks = [e["ts"] for e in events if isinstance(e.get("ts"), (int, float))
+              and e.get("ph") not in ("M", "P") and e.get("name") not in ("Profile", "ProfileChunk", "CpuProfile")]
+    if not clocks:
+        clocks = [t for t in starts.values() if t is not None]
     offset_ms = (start - min(clocks)) / 1000 if start is not None else 0
     merged = {}
     for node in profiles[key]["nodes"]:
@@ -207,6 +214,20 @@ def ranked(db, top):
         FROM costs c JOIN traces t ON t.id=c.trace_id JOIN frames f ON f.id=c.frame_id JOIN totals ON totals.kind=t.kind
         GROUP BY t.kind, f.id ORDER BY self_ms DESC, inclusive_ms DESC LIMIT ?
     """, (top,))]
+
+
+def comparison_totals(db):
+    totals = {}
+    for row in ranked(db, -1):
+        if row["mapped"]:
+            location = (row["file"], row["line"], row["col"])
+            key = (row["kind"], location, None)
+        else:
+            location = (row["generated_url"], row["generated_line"], row["generated_col"])
+            key = (row["kind"], location, row["name"])
+        total = totals.setdefault(key, {"name": row["name"], "self_ms": 0})
+        total["self_ms"] += row["self_ms"]
+    return totals
 
 
 def window_for(trace, window):
@@ -288,16 +309,13 @@ def reduce_traces(traces, out, window=None, source_map=None, top=20, compare_to=
             raise ValueError("No measured work inside the selected window")
         diff = []
         if compare_to:
-            def identity(row):
-                location = (row["file"], row["line"], row["col"]) if row["mapped"] else \
-                    (row["generated_url"], row["generated_line"], row["generated_col"])
-                return (row["kind"], row["name"], *location)
             with sqlite3.connect(f"file:{Path(compare_to).resolve()}?mode=ro", uri=True) as previous:
-                before = {identity(r): r for r in ranked(previous, 10**6)}
-            after = {identity(r): r for r in ranked(db, 10**6)}
+                before = comparison_totals(previous)
+            after = comparison_totals(db)
             for key in before.keys() | after.keys():
+                kind, location, _ = key
                 a, b = before.get(key, {}), after.get(key, {})
-                diff.append({"kind": key[0], "name": key[1], "location": list(key[2:]),
+                diff.append({"kind": kind, "name": (b or a)["name"], "location": list(location),
                              "before_ms": a.get("self_ms", 0), "after_ms": b.get("self_ms", 0),
                              "delta_ms": b.get("self_ms", 0) - a.get("self_ms", 0)})
             diff.sort(key=lambda row: abs(row["delta_ms"]), reverse=True)

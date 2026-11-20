@@ -1,6 +1,7 @@
-"""Authority: the Chrome/Hermes CPU profile and React DevTools export formats, the v3 source-map
-spec, and Dev's benchmark rules (>=5 runs a side, same device and build, equal work, no errors,
-a named limiter). Run: python3 -m unittest discover -s tests -v
+"""Authority: Chrome DevTools SamplesHandler and MetaHandler, the Chrome/Hermes CPU profile
+and React DevTools export formats, the v3 source-map spec, and Dev's benchmark rules
+(>=5 runs a side, same device and build, equal positive work, no errors, a named limiter).
+Run: python3 -m unittest discover -s tests -t .
 """
 
 import json
@@ -73,6 +74,30 @@ class TraceReduction(unittest.TestCase):
         result = reduce_traces([file], self.out / "late.sqlite", (1000, 1002))
         self.assertEqual(result["ranked"][0]["self_ms"], 2)
 
+    def chrome_sample_time(self, events, profile_ts, payload_start, window):
+        trace = {"traceEvents": [*events,
+            {"name": "Profile", "ph": "P", "pid": 1, "tid": 1, "id": "a", "ts": profile_ts,
+             "args": {"data": {"startTime": payload_start}}},
+            {"name": "ProfileChunk", "ph": "P", "pid": 1, "tid": 1, "id": "a", "ts": profile_ts + 2000,
+             "args": {"data": {"cpuProfile": {"nodes": [{"id": 1, "callFrame": {"functionName": "save"}}],
+                                              "samples": [1]}, "timeDeltas": [2000]}}}]}
+        file = self.out / "clock.json"
+        file.write_text(json.dumps(trace))
+        rows = reduce_traces([file], self.out / "clock.sqlite", window)["ranked"]
+        return [(r["name"], r["self_ms"]) for r in rows]
+
+    def test_a_profile_starts_at_its_event_timestamp_not_its_payload_clock(self):
+        events = [{"name": "work", "ph": "I", "pid": 1, "tid": 1, "ts": 5000000}]
+        self.assertEqual(self.chrome_sample_time(events, 5004000, 2000000, (4, 6)), [("save", 2)])
+
+    def test_metadata_timestamps_do_not_set_the_recording_origin(self):
+        timed = {"name": "work", "ph": "I", "pid": 1, "tid": 1, "ts": 5000000}
+        for origin, window in (([timed], (4, 6)), ([], (0, 2))):
+            with self.subTest(timed_event=bool(origin)):
+                events = [{"name": "process_name", "ph": "M", "pid": 1, "tid": 0, "ts": 0},
+                          {"name": "thread_name", "ph": "M", "pid": 1, "tid": 1, "ts": 1000}, *origin]
+                self.assertEqual(self.chrome_sample_time(events, 5004000, 5004000, window), [("save", 2)])
+
     def test_ios_jsbundle_frames_are_mapped_through_the_source_map(self):
         profile = json.loads((FIXTURES / "cpu.cpuprofile").read_text())
         for node in profile["nodes"]:
@@ -107,6 +132,24 @@ class TraceReduction(unittest.TestCase):
         after = reduce_traces([trace("after.cpuprofile", 10, 30)], self.out / "a.sqlite", "whole", compare_to=before["sqlite"])
         changed = [(d["location"][2], d["delta_ms"]) for d in after["diff"] if d["delta_ms"]]
         self.assertEqual(changed, [(10, 10)])
+
+    def test_a_comparison_sums_renamed_bundle_frames_at_the_same_source_location(self):
+        source_map = self.out / "renamed.map"
+        source_map.write_text(json.dumps({"version": 3, "sources": ["src/work.ts"], "names": [], "mappings": "AAAA"}))
+
+        def reduction(label, frames, baseline=None):
+            nodes = [{"id": n, "callFrame": {"functionName": name, "url": "index.bundle",
+                                            "lineNumber": 0, "columnNumber": n}}
+                     for n, (name, _) in enumerate(frames, 1)]
+            path = self.out / f"{label}.cpuprofile"
+            path.write_text(json.dumps({"nodes": nodes, "samples": [node["id"] for node in nodes],
+                                        "timeDeltas": [ms * 1000 for _, ms in frames]}))
+            return reduce_traces([path], self.out / f"{label}.sqlite", "whole", source_map, compare_to=baseline)
+
+        before = reduction("before", [("a", 20), ("b", 30)])
+        after = reduction("after", [("c", 50)], before["sqlite"])
+        self.assertEqual([(row["location"], row["before_ms"], row["after_ms"], row["delta_ms"])
+                          for row in after["diff"]], [(["src/work.ts", 1, 1], 50, 50, 0)])
 
     def test_unmapped_frames_with_one_name_stay_apart_by_generated_location(self):
         profile = {"nodes": [{"id": 1, "callFrame": {"functionName": "(root)", "url": "", "lineNumber": -1, "columnNumber": -1},
@@ -150,6 +193,22 @@ class BenchmarkVerdict(unittest.TestCase):
         result = compare(self.side([99, 100, 101, 100, 100]), self.side([79, 80, 81, 80, 80]), "lower", 1, "query CPU")
         self.assertEqual((result["before"]["median"], result["after"]["median"], result["noise"], result["verdict"]),
                          (100, 80, 2, "faster"))
+
+    def test_missing_work_count_makes_the_verdict_inconclusive(self):
+        before = self.side([100] * 5)
+        after = self.side([50] * 5)
+        del after["runs"][0]["work_count"]
+        result = compare(before, after, "lower", 1, "CPU")
+        self.assertEqual((result["verdict"], result["after"]["work_count"]), ("inconclusive", None))
+
+    def test_supplied_work_counts_must_be_nonnegative_and_finite_even_when_one_is_missing(self):
+        before = self.side([100] * 5)
+        for work, message in ((-1, "cannot be negative"), (float("inf"), "finite number")):
+            with self.subTest(work=work), self.assertRaisesRegex(ValueError, message):
+                after = self.side([50] * 5)
+                del after["runs"][0]["work_count"]
+                after["runs"][1]["work_count"] = work
+                compare(before, after, "lower", 1, "CPU")
 
     def test_noise_errors_skipped_work_too_few_runs_or_no_limiter_are_not_wins(self):
         baseline = self.side([90, 100, 110, 100, 100])
