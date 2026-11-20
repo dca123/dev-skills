@@ -120,6 +120,11 @@ _React only._
 - An effect that copies props or query data into state, or infers an action from that state, is a smell because it creates a second update protocol instead of deriving or handling the event directly.
   - **Fix:** Derive during render; perform user actions in their handler; use the query or form library as the state owner.
 - **Keep:** Synchronizing with an external system, a correctly owned subscription with cleanup, or an imperative platform API driven by committed UI state.
+- **Recipe**, when a lint error or review flags one of these effects:
+  1. Name the value the effect decides and the user action or record lifecycle that owns the decision.
+  2. Before editing production code, run the real action and assert the outcome. For a new record's default, invoke creation and read back what it writes before opening the form. Record the actual value, even if the check fails.
+  3. Move the decision to its owner: derive a value from current inputs during render, run user-triggered work in its action, and set a record's starting values where the record is created.
+  4. Delete the effect once its work has moved. Verify the outcome with a test through the owning action or lifecycle, using the real producer.
 
 ### Refs used as a second state store [S09]
 
