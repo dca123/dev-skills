@@ -10,6 +10,7 @@ These skills hold rules only. Project-specific conventions and worked examples s
 |---|---|
 | `tests` | Write, audit, design and mutation-test tests against one guide. Only contract tests are committed. |
 | `smells` | Structural code smells, each with its fix and the legitimate uses that are not findings. |
+| `error-message-review` | Write and review validation messages, warnings, and application failures in context. |
 | `principle-fix-root-causes` | Debugging: fix where the system first went wrong, and choose a local or structural fix. |
 | `principle-separate-before-serializing-shared-state` | Concurrent writers: separate the state before reaching for a lock. |
 | `principle-make-operations-idempotent` | Operations that converge however often they run and wherever they stopped. |
