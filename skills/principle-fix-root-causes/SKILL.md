@@ -25,7 +25,7 @@ Once the root cause is known, decide which kind of fix it needs, and say which i
 
 - **Local:** one site, one wrong decision. Fix it there.
 - **Structural:** the same class of bug can recur at other sites, or the obvious fix is a guard, lock, retry or default that hides the cause. Change the structure so the class cannot exist:
-  - concurrent writers: give each its own state, or one writer ([separate before serializing shared state](../principle-separate-before-serializing-shared-state/SKILL.md));
+  - concurrent writers: separate ownership, and coordinate only the writes that must stay shared ([separate before serializing shared state](../principle-separate-before-serializing-shared-state/SKILL.md));
   - repeats, restarts and partial runs: make the operation converge ([make operations idempotent](../principle-make-operations-idempotent/SKILL.md));
   - states that should never exist: a type, discriminated union or state machine that cannot represent them.
 

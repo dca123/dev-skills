@@ -1,6 +1,6 @@
 ---
 name: principle-separate-before-serializing-shared-state
-description: "Apply when concurrent actors might write to the same file, branch, key, or state object. Eliminate the sharing first; serialize structurally only when one shared writer is a real invariant."
+description: "Apply when concurrent actors or synced replicas might write the same file, branch, key, record, or state object. Eliminate the sharing first; coordinate only the writes that must stay shared."
 ---
 
 # Separate Before Serializing Shared State
@@ -9,4 +9,4 @@ When concurrent actors might write the same file, branch, key, or object, first 
 
 Only when one shared write target is a real invariant, serialize access structurally (a lockfile, a single writer, sequential phases, compare-and-swap). Instructions are not concurrency control, and "we need a lock" is a smell to check first.
 
-A replicated record (one synced row that two devices edit) is such a target. Split ownership by field where you can. For fields both sides edit, check each write against the value the editor last saw, and tell the user when it changed instead of overwriting it.
+A synced record can hold facts with different owners; keep those writes separate, and keep fields that must change together in one write. When replicas must edit the same fields, send each change with the value or revision it was based on, and accept it where the authoritative copy lives only if that base still matches. A check on the device alone misses an edit made elsewhere before the upload. On a conflict, keep the pending edit and tell the editor.
