@@ -11,7 +11,9 @@ Trace the action, its outcome, what the user can see or change, and which recove
 
 ## Validation and warnings
 
-State the requirement or mismatch. Let the visible label and value supply context. If the fix is apparent, explaining the rule is enough. Beside two editable dates, "End can't be before Start" identifies the problem without guessing which date is wrong.
+State the requirement or mismatch. Let the visible label and value supply context. If the fix is apparent, explaining the rule is enough; don't add example values the rule already implies ("must be a number", not "must be a number, such as 2"). Beside two editable dates, "End can't be before Start" identifies the problem without guessing which date is wrong.
+
+Away from the field, as in a summary or list, start with the location as a short prefix, then the problem: "Failure Reason, Bird strike: “Hours flown” must be a number." Name a repeated item as the user would ("second Equipment fault"), never by position or internal terms like "entry".
 
 Inline warnings can supply just the missing threshold when the value is visible. In a confirmation, name the value, the threshold, and what proceeding does if there is a consequence. A warning should not sound like a block.
 
